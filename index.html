@@ -6822,95 +6822,122 @@
     )();
 </script>
 <script>
-  const MY_SHEET_URL = "https://script.google.com/macros/s/AKfycbwVwch6CFpLVdqk67B8X3zgc1VftlJ_gSFCnL-07FgE9euEDK8lnEYIVTNaxUWCF3r5jg/exec";
+const MY_SHEET_URL = "https://script.google.com/macros/s/AKfycbwVwch6CFpLVdqk67B8X3zgc1VftlJ_gSFCnL-07FgE9euEDK8lnEYIVTNaxUWCF3r5jg/exec";
 
-  function showSuccessPopup() {
-    // Dùng lại popup sẵn có của LadiPage
-    var popup = document.getElementById("POPUP1");
-    if (popup) {
-      popup.style.display = "block";
-      // Backdrop
-      var backdrop = document.getElementById("backdrop-popup");
-      if (backdrop) backdrop.style.display = "block";
-    }
-  }
-
-  function sendToSheet(data, formEl) {
-    // Disable nút để tránh submit 2 lần
-    var btn = formEl.querySelector('.ladi-button');
-    if (btn) btn.style.pointerEvents = "none";
-
-    fetch(MY_SHEET_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
-    })
-    .then(function() {
-      formEl.reset();
-      showSuccessPopup();
-      if (btn) btn.style.pointerEvents = "";
-    })
-    .catch(function(err) {
-      console.error("Lỗi:", err);
-      alert("Có lỗi xảy ra, vui lòng thử lại!");
-      if (btn) btn.style.pointerEvents = "";
-    });
-  }
-
-  function interceptForms() {
-    var forms = document.querySelectorAll('.ladi-form form');
-    if (forms.length === 0) {
-      setTimeout(interceptForms, 500);
+// Hiện popup thành công của LadiPage
+function showSuccessPopup() {
+  if (typeof window.LadiPageScript !== "undefined") {
+    try {
+      window.LadiPageScript.openPopup("POPUP1");
       return;
+    } catch(e) {}
+  }
+  // Fallback: mở thủ công
+  var popup = document.getElementById("POPUP1");
+  if (popup) {
+    popup.style.display = "flex";
+    popup.style.zIndex = "99999999";
+    var backdrop = document.getElementById("backdrop-popup");
+    if (backdrop) {
+      backdrop.style.display = "block";
+      backdrop.style.background = "rgba(0,0,0,0.5)";
     }
+  }
+}
 
-    forms.forEach(function(form) {
-      if (form.dataset.intercepted) return;
-      form.dataset.intercepted = "true";
+// Lấy data từ form
+function getFormData(form) {
+  return {
+    time:    new Date().toLocaleString("vi-VN"),
+    name:    (form.querySelector('[name="name"]')        || {}).value || "",
+    phone:   (form.querySelector('[name="phone"]')       || {}).value || "",
+    city:    (form.querySelector('[name="city"]')        || {}).value || "",
+    address: (form.querySelector('[name="address"]')     || {}).value || "",
+    course:  (form.querySelector('[name="message"]')     || {}).value || "",
+    age:     (form.querySelector('[name="form_item72"]') || {}).value || ""
+  };
+}
 
-      // Bắt sự kiện click trên nút ĐĂNG KÝ NGAY của LadiPage
-      var ladiBtn = form.closest('.ladi-form') 
-                    ? form.closest('.ladi-form').querySelector('.ladi-button') 
-                    : null;
+// Gửi data lên Google Sheet (dùng Image trick để bypass CORS)
+function sendToSheet(data) {
+  var params = Object.keys(data)
+    .map(function(k) {
+      return encodeURIComponent(k) + "=" + encodeURIComponent(data[k]);
+    })
+    .join("&");
+  var url = MY_SHEET_URL + "?" + params;
 
-      if (ladiBtn) {
-        ladiBtn.addEventListener('click', function(e) {
-          e.stopImmediatePropagation();
+  // Dùng GET request qua <img> để tránh CORS hoàn toàn
+  var img = new Image();
+  img.src = url;
+  img.onload = img.onerror = function() {
+    showSuccessPopup();
+  };
+  // Timeout fallback nếu không có callback
+  setTimeout(showSuccessPopup, 3000);
+}
 
-          // Validate thủ công
-          var phone = (form.querySelector('[name="phone"]') || {}).value || "";
-          var name  = (form.querySelector('[name="name"]')  || {}).value || "";
-          if (!name || !phone) {
-            alert("Vui lòng điền đầy đủ họ tên và số điện thoại!");
-            return;
-          }
+// Validate form trước khi gửi
+function validateAndSend(form) {
+  var name  = (form.querySelector('[name="name"]')  || {}).value || "";
+  var phone = (form.querySelector('[name="phone"]') || {}).value || "";
+  var phoneRegex = /^(\+84|0)(9|8|7|5|3)[0-9]{8}$/;
 
-          var data = {
-            time:    new Date().toLocaleString("vi-VN"),
-            name:    name,
-            phone:   phone,
-            city:    (form.querySelector('[name="city"]')        || {}).value || "",
-            address: (form.querySelector('[name="address"]')     || {}).value || "",
-            course:  (form.querySelector('[name="message"]')     || {}).value || "",
-            age:     (form.querySelector('[name="form_item72"]') || {}).value || ""
-          };
-
-          sendToSheet(data, form);
-        }, true); // useCapture = true để chạy trước LadiPage
-      }
-
-      // Chặn submit gốc
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-      }, true);
-    });
+  if (!name.trim()) {
+    alert("Vui lòng nhập tên phụ huynh!");
+    return false;
+  }
+  if (!phoneRegex.test(phone.trim())) {
+    alert("Số điện thoại không hợp lệ!");
+    return false;
   }
 
-  window.addEventListener("load", function() {
-    setTimeout(interceptForms, 2000);
+  var data = getFormData(form);
+  sendToSheet(data);
+  return true;
+}
+
+// Override LadiPage form submit
+function hookLadiPageForms() {
+  // Patch LadiPageScript để chặn gửi về LadiPage server
+  if (typeof window.LadiPageScript !== "undefined" &&
+      window.LadiPageScript.submitForm) {
+    window.LadiPageScript._originalSubmitForm = window.LadiPageScript.submitForm;
+    window.LadiPageScript.submitForm = function(formId) {
+      var formEl = document.getElementById(formId);
+      if (!formEl) return;
+      var form = formEl.querySelector("form");
+      if (form) validateAndSend(form);
+      // KHÔNG gọi _originalSubmitForm → chặn gửi về LadiPage
+    };
+  }
+
+  // Fallback: bắt tất cả nút submit trong form LadiPage
+  document.querySelectorAll('.ladi-form form').forEach(function(form) {
+    if (form.dataset.hooked) return;
+    form.dataset.hooked = "1";
+
+    form.addEventListener("submit", function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      validateAndSend(form);
+    }, true);
   });
+}
+
+// Chạy sau khi LadiPage khởi động xong
+function waitAndHook() {
+  if (typeof window.LadiPageScript !== "undefined" &&
+      document.querySelector('.ladi-form form')) {
+    hookLadiPageForms();
+  } else {
+    setTimeout(waitAndHook, 500);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+  setTimeout(waitAndHook, 1500);
+});
 </script>
 </body>
 </html>
